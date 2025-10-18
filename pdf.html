@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>โปรแกรมจัดการ PDF หลายไฟล์</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Inter Font -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f7f9;
+        }
+        .container-wrapper {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 1rem;
+        }
+        .page-card {
+            transition: all 0.2s;
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .selected {
+            border-color: #10B981 !important; /* Emerald 500 */
+            background-color: #ECFDF5; /* Emerald 50 */
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+        }
+        /* Custom scrollbar style for better aesthetics */
+        #pageSelectionContainer::-webkit-scrollbar {
+            width: 8px;
+        }
+        #pageSelectionContainer::-webkit-scrollbar-thumb {
+            background-color: #9CA3AF;
+            border-radius: 10px;
+        }
+    </style>
+    <!-- PDF-Lib CDN for modification/saving -->
+    <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+    <!-- PDF.js CDN for rendering/preview -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.js"></script>
+    <script>
+        // กำหนด worker สำหรับ pdf.js
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.js';
+    </script>
+</head>
+<body>
+
+    <div class="container-wrapper">
+        <header class="text-center py-6 bg-white rounded-xl shadow-lg mb-6">
+            <h1 class="text-3xl font-bold text-gray-800">เครื่องมือจัดการ PDF หลายไฟล์</h1>
+            <p class="text-gray-500 mt-1">เลือกหน้าจากไฟล์หลายไฟล์เพื่อรวมหรือแยก</p>
+        </header>
+
+        <!-- ส่วนสำหรับเลือกไฟล์ -->
+        <div id="file-input-section" class="bg-white p-6 rounded-xl shadow-lg mb-6">
+            <label for="pdfFiles" class="block text-lg font-semibold text-gray-700 mb-3">
+                1. เลือกไฟล์ PDF ของคุณ (สามารถเลือกได้หลายไฟล์)
+            </label>
+            <!-- แก้ไข: เพิ่ม multiple -->
+            <input type="file" id="pdfFiles" accept=".pdf" multiple class="block w-full text-sm text-gray-500
+                file:mr-4 file:py-2 file:px-4
+                file:rounded-full file:border-0
+                file:text-sm file:font-semibold
+                file:bg-emerald-50 file:text-emerald-700
+                hover:file:bg-emerald-100" />
+            <p id="loadingMessage" class="mt-4 text-center text-emerald-600 hidden">
+                กำลังโหลดและเตรียมไฟล์... โปรดรอสักครู่
+            </p>
+        </div>
+
+        <!-- ส่วนควบคุมและแสดงตัวอย่าง (จะแสดงเมื่อโหลดไฟล์เสร็จ) -->
+        <div id="pdf-editor" class="hidden">
+            <div class="grid lg:grid-cols-3 gap-6">
+                
+                <!-- คอลัมน์ด้านซ้าย: การเลือกหน้า & ควบคุม -->
+                <div class="lg:col-span-1 bg-white p-6 rounded-xl shadow-lg h-full">
+                    <h2 class="text-xl font-bold text-gray-700 mb-4">2. หน้าที่เลือกจากไฟล์ทั้งหมด (สำหรับการรวม)</h2>
+                    
+                    <!-- แสดงรายการหน้าที่ถูกเลือกเรียงตามลำดับการเลือก -->
+                    <div id="selectedOrderContainer" class="p-2 mb-4 bg-gray-50 border rounded-lg text-sm">
+                        <p class="font-semibold text-gray-600">ลำดับการรวม: <span id="selectedCount">0</span> หน้า</p>
+                        <p id="selectedPagesSummary" class="text-gray-500 italic mt-1 break-all">ยังไม่มีการเลือกหน้าใด</p>
+                    </div>
+
+                    <div class="max-h-96 overflow-y-auto pr-2" id="pageSelectionContainer">
+                        <!-- ส่วนนี้จะแสดงกลุ่มหน้า PDF แยกตามไฟล์ -->
+                    </div>
+
+                    <!-- NEW: ส่วนสำหรับแยก/ระเบิดไฟล์ (Section 3) -->
+                    <div class="mt-6 pt-4 border-t border-red-200">
+                        <h2 class="text-xl font-bold text-gray-700 mb-4 text-red-700">3. แยก/ระเบิดไฟล์ PDF (Split)</h2>
+                        
+                        <label for="fileToExplode" class="block text-sm font-medium text-gray-600 mb-1">เลือกไฟล์ที่ต้องการแยก:</label>
+                        <select id="fileToExplode" class="w-full p-2 border border-gray-300 rounded-lg mb-3 bg-white disabled:bg-gray-100" disabled>
+                            <option value="">-- กรุณาโหลดไฟล์ก่อน --</option>
+                        </select>
+
+                        <label for="prefixInput" class="block text-sm font-medium text-gray-600 mb-1">กำหนดชื่อนำหน้า (Prefix):</label>
+                        <input type="text" id="prefixInput" placeholder="ตัวอย่าง: Report_Page" value="Split_Page" class="w-full p-2 border border-gray-300 rounded-lg mb-4 disabled:bg-gray-100" disabled>
+                        
+                        <button id="explodeButton" class="w-full bg-red-600 text-white font-semibold py-3 px-4 rounded-xl hover:bg-red-700 transition duration-150 shadow-md disabled:opacity-50" disabled>
+                            <svg class="inline w-5 h-5 mr-2 -mt-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                            แยกไฟล์ตามหน้า (Explode)
+                        </button>
+                    </div>
+
+
+                    <!-- เดิมคือ 3. บันทึกไฟล์ใหม่ (ตอนนี้เป็น Section 4) -->
+                    <div class="mt-6 pt-4 border-t">
+                        <h2 class="text-xl font-bold text-gray-700 mb-4">4. บันทึกไฟล์ใหม่ (รวมหน้าที่เลือก)</h2>
+                        <button id="saveButton" class="w-full bg-emerald-600 text-white font-semibold py-3 px-4 rounded-xl hover:bg-emerald-700 transition duration-150 shadow-md disabled:opacity-50" disabled>
+                            <svg class="inline w-5 h-5 mr-2 -mt-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                            บันทึก PDF ที่เลือก (ไฟล์รวม)
+                        </button>
+                    </div>
+                </div>
+
+                <!-- คอลัมน์ด้านขวา: ตัวอย่าง (Preview) -->
+                <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-lg">
+                    <h2 class="text-xl font-bold text-gray-700 mb-4">ตัวอย่างหน้าปัจจุบัน (<span id="currentPageDisplay">ยังไม่ได้เลือก</span>)</h2>
+                    <div class="flex flex-col items-center">
+                        <div id="previewArea" class="border border-gray-300 rounded-lg shadow-inner overflow-hidden max-w-full">
+                            <canvas id="pdfCanvas" class="w-full"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+        
+        <!-- ข้อความสำหรับ Modal/Alert (แทน alert()) -->
+        <div id="messageBox" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden items-center justify-center z-50">
+            <div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full">
+                <h3 id="messageTitle" class="text-xl font-bold text-gray-800 mb-3">ข้อความ</h3>
+                <p id="messageContent" class="text-gray-600 mb-4">เนื้อหา</p>
+                <button id="closeMessageButton" class="w-full bg-emerald-600 text-white font-semibold py-2 rounded-lg hover:bg-emerald-700">ตกลง</button>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const { PDFDocument } = PDFLib;
+        
+        // Global state
+        // โครงสร้างไฟล์: [{ fileId: 1, name: 'doc1.pdf', pdfjsDoc: obj, pdfLibBytes: arraybuffer, numPages: 5 }]
+        let loadedFiles = []; 
+        let fileCounter = 0;
+        
+        // โครงสร้างหน้าถูกเลือก: [{ fileId: 1, pageNum: 3, name: 'doc1.pdf', element: HTMLButton }]
+        let selectedPages = []; 
+        let currentRenderTask = null; 
+
+        // DOM elements
+        const fileInput = document.getElementById('pdfFiles');
+        const loadingMessage = document.getElementById('loadingMessage');
+        const pdfEditor = document.getElementById('pdf-editor');
+        const pageSelectionContainer = document.getElementById('pageSelectionContainer');
+        const saveButton = document.getElementById('saveButton');
+        const pdfCanvas = document.getElementById('pdfCanvas');
+        const currentPageDisplay = document.getElementById('currentPageDisplay');
+        const selectedCount = document.getElementById('selectedCount');
+        const selectedPagesSummary = document.getElementById('selectedPagesSummary');
+        
+        // NEW DOM elements for Split
+        const fileToExplode = document.getElementById('fileToExplode');
+        const prefixInput = document.getElementById('prefixInput');
+        const explodeButton = document.getElementById('explodeButton');
+
+        // Message Box elements
+        const messageBox = document.getElementById('messageBox');
+        const messageTitle = document.getElementById('messageTitle');
+        const messageContent = document.getElementById('messageContent');
+        const closeMessageButton = document.getElementById('closeMessageButton');
+
+        // --- Utility Functions ---
+
+        function showMessage(title, content) {
+            messageTitle.textContent = title;
+            messageContent.textContent = content;
+            messageBox.style.display = 'flex';
+        }
+
+        closeMessageButton.addEventListener('click', () => {
+            messageBox.style.display = 'none';
+        });
+
+        function downloadPdf(bytes, filename) {
+            const blob = new Blob([bytes], { type: 'application/pdf' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // --- PDF Rendering (Preview) ---
+
+        /**
+         * แสดงหน้า PDF ที่กำหนดใน Canvas
+         * @param {number} fileId - ID ของไฟล์ต้นฉบับ
+         * @param {number} pageIndex - เลขหน้า (0-based)
+         */
+        async function renderPage(fileId, pageIndex) {
+            const file = loadedFiles.find(f => f.fileId === fileId);
+            if (!file) return;
+
+            // 1. ตรวจสอบและยกเลิกงาน Render เก่า
+            if (currentRenderTask) {
+                currentRenderTask.cancel();
+            }
+
+            // อัปเดต UI
+            currentPageDisplay.textContent = `ไฟล์: ${file.name} | หน้า ${pageIndex + 1}`;
+
+            try {
+                const page = await file.pdfjsDoc.getPage(pageIndex + 1);
+                
+                const viewport = page.getViewport({ scale: 1.5 });
+                
+                // ตั้งค่าขนาด Canvas
+                pdfCanvas.height = viewport.height;
+                pdfCanvas.width = viewport.width;
+
+                const renderContext = {
+                    canvasContext: pdfCanvas.getContext('2d'),
+                    viewport: viewport,
+                };
+                
+                // 2. เริ่มงาน Render ใหม่และเก็บ reference ไว้
+                const renderTask = page.render(renderContext);
+                currentRenderTask = renderTask;
+                
+                await renderTask.promise;
+
+                // 3. เมื่อเสร็จสิ้น ให้ตั้งค่าเป็น null
+                if (currentRenderTask === renderTask) {
+                    currentRenderTask = null;
+                }
+
+            } catch (error) {
+                if (error && error.name === 'RenderingCancelledException') {
+                    console.log("Previous rendering cancelled.");
+                    return;
+                }
+                currentRenderTask = null;
+                console.error("Error rendering page:", error);
+                // ไม่แสดง message box เพราะอาจจะรบกวนการ preview เร็วๆ
+            }
+        }
+
+        // --- PDF File Loading and Setup ---
+
+        /**
+         * โหลดไฟล์ PDF และเตรียมโครงสร้างการทำงาน
+         * @param {FileList} files - ไฟล์ PDF ที่เลือก
+         */
+        async function loadPdfFiles(files) {
+            if (files.length === 0) return;
+
+            // รีเซ็ตสถานะทั้งหมด
+            loadedFiles = [];
+            selectedPages = [];
+            fileCounter = 0;
+            pageSelectionContainer.innerHTML = '';
+            pdfEditor.classList.add('hidden');
+            loadingMessage.classList.remove('hidden');
+            updateSelectionSummary();
+
+            try {
+                for (const file of files) {
+                    fileCounter++;
+                    const fileId = fileCounter;
+
+                    // อ่านข้อมูลไบต์จากไฟล์
+                    const pdfLibBytes = await file.arrayBuffer();
+                    
+                    // โหลดด้วย pdf.js (สำหรับแสดงตัวอย่าง)
+                    const pdfjsDocument = await pdfjsLib.getDocument({ data: pdfLibBytes }).promise;
+                    const numPages = pdfjsDocument.numPages;
+
+                    loadedFiles.push({
+                        fileId,
+                        name: file.name,
+                        pdfjsDoc: pdfjsDocument,
+                        pdfLibBytes,
+                        numPages
+                    });
+                }
+                
+                if (loadedFiles.length > 0) {
+                    createPageSelectionUI();
+                    // แสดงหน้าแรกของไฟล์แรกเป็นตัวอย่าง
+                    renderPage(loadedFiles[0].fileId, 0);
+                    pdfEditor.classList.remove('hidden');
+                    
+                    // NEW: Enable and populate the explode section
+                    fileToExplode.disabled = false;
+                    prefixInput.disabled = false;
+                    explodeButton.disabled = false;
+                    
+                    // Clear and populate dropdown
+                    fileToExplode.innerHTML = '';
+                    loadedFiles.forEach(file => {
+                        const option = document.createElement('option');
+                        option.value = file.fileId;
+                        option.textContent = `${file.name} (${file.numPages} หน้า)`;
+                        fileToExplode.appendChild(option);
+                    });
+
+                } else {
+                    // Disable when no files are loaded
+                    fileToExplode.innerHTML = '<option value="">-- กรุณาโหลดไฟล์ก่อน --</option>';
+                    fileToExplode.disabled = true;
+                    prefixInput.disabled = true;
+                    explodeButton.disabled = true;
+                }
+
+            } catch (error) {
+                console.error("Error loading PDF:", error);
+                showMessage("ข้อผิดพลาดในการโหลดไฟล์", "ไม่สามารถโหลดไฟล์ PDF ได้ กรุณาตรวจสอบว่าเป็นไฟล์ PDF ที่ถูกต้อง: " + error.message);
+                loadedFiles = [];
+            } finally {
+                loadingMessage.classList.add('hidden');
+            }
+        }
+
+        // --- Page Selection UI and Logic ---
+
+        function updateSelectionSummary() {
+            selectedCount.textContent = selectedPages.length;
+            
+            if (selectedPages.length === 0) {
+                selectedPagesSummary.textContent = "ยังไม่มีการเลือกหน้าใด";
+                saveButton.disabled = true;
+            } else {
+                // สร้างสรุปสั้นๆ (เช่น doc1.pdf (p1, p3), doc2.pdf (p1))
+                const summary = selectedPages.map(p => {
+                    const shortName = p.name.length > 15 ? p.name.substring(0, 12) + '...' : p.name;
+                    return `${shortName}(${p.pageNum})`;
+                }).join(', ');
+                selectedPagesSummary.textContent = summary.length > 150 ? summary.substring(0, 150) + '...' : summary;
+                saveButton.disabled = false;
+            }
+        }
+
+        function createPageSelectionUI() {
+            pageSelectionContainer.innerHTML = '';
+
+            loadedFiles.forEach(file => {
+                const fileContainer = document.createElement('div');
+                fileContainer.className = 'mb-4 p-3 bg-gray-100 rounded-lg shadow-inner';
+                fileContainer.innerHTML = `<h3 class="text-sm font-bold text-gray-800 truncate mb-2">${file.name} (${file.numPages} หน้า)</h3>`;
+                
+                const grid = document.createElement('div');
+                grid.className = 'grid grid-cols-6 gap-1';
+
+                for (let i = 1; i <= file.numPages; i++) {
+                    const pageNum = i;
+                    const button = document.createElement('div');
+                    button.textContent = pageNum;
+                    button.dataset.fileId = file.fileId;
+                    button.dataset.pageNum = pageNum;
+                    button.className = 'page-card p-1 rounded-md border border-gray-300 text-xs font-medium text-gray-700 hover:border-emerald-400';
+
+                    // ตรวจสอบสถานะการเลือกเดิม
+                    const isSelected = selectedPages.some(p => p.fileId === file.fileId && p.pageNum === pageNum);
+                    if (isSelected) {
+                         button.classList.add('selected');
+                    }
+
+                    // Event listener สำหรับเลือกหน้า
+                    button.addEventListener('click', () => {
+                        togglePageSelection(file.fileId, pageNum, file.name, button);
+                    });
+
+                    // Event listener สำหรับแสดงตัวอย่าง
+                    button.addEventListener('mouseover', () => renderPage(file.fileId, pageNum - 1));
+                    button.addEventListener('touchstart', (e) => {
+                        e.preventDefault(); 
+                        renderPage(file.fileId, pageNum - 1);
+                    });
+                    
+                    grid.appendChild(button);
+                }
+                
+                fileContainer.appendChild(grid);
+                pageSelectionContainer.appendChild(fileContainer);
+            });
+        }
+
+        /**
+         * สลับสถานะการเลือกหน้า
+         * @param {number} fileId - ID ไฟล์ (จาก loadedFiles)
+         * @param {number} pageNum - เลขหน้า (1-based)
+         * @param {string} fileName - ชื่อไฟล์
+         * @param {HTMLElement} button - ปุ่ม HTML
+         */
+        function togglePageSelection(fileId, pageNum, fileName, button) {
+            const existingIndex = selectedPages.findIndex(p => p.fileId === fileId && p.pageNum === pageNum);
+            
+            if (existingIndex === -1) {
+                // เลือกหน้า: เก็บข้อมูลการเลือกใน selectedPages
+                selectedPages.push({ fileId, pageNum, name: fileName, element: button });
+                button.classList.add('selected');
+            } else {
+                // ยกเลิกการเลือก
+                selectedPages.splice(existingIndex, 1);
+                button.classList.remove('selected');
+            }
+            
+            updateSelectionSummary();
+        }
+
+        // --- PDF Manipulation and Saving (Merge) ---
+
+        /**
+         * สร้างไฟล์ PDF ใหม่จากหน้าที่ถูกเลือกและสั่งดาวน์โหลด (ฟังก์ชันรวม)
+         */
+        async function saveNewPdf() {
+            if (selectedPages.length === 0) {
+                showMessage("แจ้งเตือน", "กรุณาเลือกหน้า PDF ที่ต้องการอย่างน้อยหนึ่งหน้า");
+                return;
+            }
+
+            saveButton.disabled = true;
+            saveButton.textContent = 'กำลังดำเนินการรวมไฟล์...';
+            
+            try {
+                const newPdfDoc = await PDFDocument.create();
+                const sourceDocCache = {}; // Cache สำหรับเก็บ PDFDocument ที่โหลดแล้ว
+
+                for (const { fileId, pageNum } of selectedPages) {
+                    let sourceDoc;
+                    
+                    // 1. ตรวจสอบ Cache หรือโหลดไฟล์ต้นฉบับ
+                    if (sourceDocCache[fileId]) {
+                        sourceDoc = sourceDocCache[fileId];
+                    } else {
+                        const fileData = loadedFiles.find(f => f.fileId === fileId);
+                        if (!fileData || !fileData.pdfLibBytes) throw new Error(`Missing data for file ID ${fileId}`);
+                        
+                        // โหลด source PDF document จาก bytes
+                        sourceDoc = await PDFDocument.load(fileData.pdfLibBytes);
+                        sourceDocCache[fileId] = sourceDoc;
+                    }
+
+                    // 2. คัดลอกและเพิ่มหน้า
+                    const pageIndex = pageNum - 1; // 0-based index
+                    
+                    // copyPages สามารถคัดลอกได้มากกว่า 1 หน้า แต่เราต้องการแค่หน้าเดียวในแต่ละรอบ
+                    const [copiedPage] = await newPdfDoc.copyPages(sourceDoc, [pageIndex]);
+                    newPdfDoc.addPage(copiedPage);
+                }
+
+                // สร้างไบต์ไฟล์ใหม่
+                const newPdfBytes = await newPdfDoc.save();
+
+                // สั่งดาวน์โหลด
+                const filename = `PDF_Merged_${new Date().toISOString().slice(0, 10)}.pdf`;
+                downloadPdf(newPdfBytes, filename);
+                
+                showMessage("เสร็จสมบูรณ์!", `ไฟล์ PDF ใหม่ (${selectedPages.length} หน้า) ถูกบันทึกแล้วในชื่อ: ${filename}`);
+
+            } catch (error) {
+                console.error("Error saving PDF (Merge):", error);
+                showMessage("ข้อผิดพลาดในการรวมไฟล์", "ไม่สามารถสร้างและบันทึกไฟล์ PDF ใหม่ได้: " + error.message);
+            } finally {
+                updateSelectionSummary();
+                saveButton.textContent = 'บันทึก PDF ที่เลือก (ไฟล์รวม)';
+            }
+        }
+
+        // --- PDF Manipulation and Saving (Explode/Split) ---
+
+        /**
+         * แยกไฟล์ PDF ที่เลือกออกเป็นไฟล์ละ 1 หน้า
+         */
+        async function explodePdf() {
+            const selectedFileId = parseInt(fileToExplode.value);
+            // ลบช่องว่างนำหน้า/ต่อท้าย และใช้ค่าเริ่มต้นถ้าว่างเปล่า
+            const prefix = prefixInput.value.trim() || "Split_Page"; 
+
+            if (!selectedFileId) {
+                showMessage("แจ้งเตือน", "กรุณาเลือกไฟล์ที่ต้องการแยก");
+                return;
+            }
+
+            const fileData = loadedFiles.find(f => f.fileId === selectedFileId);
+            if (!fileData) {
+                showMessage("ข้อผิดพลาด", "ไม่พบข้อมูลไฟล์ที่เลือก");
+                return;
+            }
+
+            explodeButton.disabled = true;
+            explodeButton.textContent = 'กำลังดำเนินการแยก...';
+            
+            let sourceDoc = null;
+
+            try {
+                // โหลด source PDF document จาก bytes เพียงครั้งเดียว
+                sourceDoc = await PDFDocument.load(fileData.pdfLibBytes);
+                const totalPages = sourceDoc.getPageCount();
+                
+                if (totalPages === 0) {
+                    showMessage("แจ้งเตือน", "ไฟล์นี้ไม่มีหน้าให้แยก");
+                    return;
+                }
+                
+                let successCount = 0;
+                
+                for (let i = 0; i < totalPages; i++) {
+                    // 1. สร้างเอกสารใหม่สำหรับหน้าเดียว
+                    const newPdfDoc = await PDFDocument.create();
+                    
+                    // 2. คัดลอกหน้าปัจจุบัน (i เป็น 0-based index)
+                    const [copiedPage] = await newPdfDoc.copyPages(sourceDoc, [i]);
+                    
+                    // 3. เพิ่มหน้าลงในเอกสารใหม่
+                    newPdfDoc.addPage(copiedPage);
+
+                    // 4. สร้างไบต์ไฟล์ใหม่
+                    const newPdfBytes = await newPdfDoc.save();
+
+                    // 5. สั่งดาวน์โหลด
+                    // running no เริ่มจาก 0 ตามที่ผู้ใช้ต้องการ
+                    const runningNo = i; 
+                    const filename = `${prefix}_${runningNo}.pdf`;
+                    
+                    downloadPdf(newPdfBytes, filename);
+                    
+                    successCount++;
+                }
+                
+                showMessage("เสร็จสมบูรณ์!", `ไฟล์ "${fileData.name}" ถูกแยกออกเป็น ${successCount} ไฟล์ เรียบร้อยแล้ว โดยใช้ชื่อนำหน้า "${prefix}"`);
+
+            } catch (error) {
+                console.error("Error exploding PDF:", error);
+                showMessage("ข้อผิดพลาดในการแยกไฟล์", "ไม่สามารถแยกไฟล์ PDF ได้: " + error.message);
+            } finally {
+                explodeButton.disabled = false;
+                explodeButton.textContent = 'แยกไฟล์ตามหน้า (Explode)';
+            }
+        }
+
+
+        // --- Event Listeners ---
+
+        fileInput.addEventListener('change', (event) => {
+            loadPdfFiles(event.target.files);
+        });
+
+        saveButton.addEventListener('click', saveNewPdf);
+        explodeButton.addEventListener('click', explodePdf);
+
+    </script>
+</body>
+</html>
+
